@@ -514,13 +514,80 @@ class DistilBertForXMC(DistilBertPreTrainedModel):
             "hidden_states": instance_hidden_states,
         }
 
+class DebertaV2ForXMC(DebertaV2PreTrainedModel):
+    """
+    Examples:
+        tokenizer = DeRobertaV2Tokenizer.from_pretrained('DeRobertaV2-base')
+        model = DeRobertaV2ForXMC.from_pretrained('DeRobertaV2-base')
+        input_ids = torch.tensor(tokenizer.encode("iphone 11 case", add_special_tokens=True)).unsqueeze(0)
+        outputs = model(input_ids)
+        last_hidden_states = outputs["hidden_states"]
+    """
 
+    def __init__(self, config):
+        super(DebertaV2ForXMC, self).__init__(config)
+        self.num_labels = config.num_labels
+
+        self.debertaV2 = DebertaV2Model(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        self.init_weights()
+
+    def init_from(self, model):
+        self.debertaV2 = model.debertaV2
+
+    @add_start_docstrings(ROBERTA_INPUTS_DOCSTRING.format("(batch_size, sequence_length)"))
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        label_embedding=None,
+    ):
+        r"""
+        Returns:
+          :obj:`dict` containing:
+                {'logits': (:obj:`torch.FloatTensor` of shape (batch_size, num_labels)) pred logits for each label,
+                 'pooled_output': (:obj:`torch.FloatTensor` of shape (batch_size, hidden_dim)) input sequence embedding vector,
+                 'hidden_states': (:obj:`torch.FloatTensor` of shape (batch_size, sequence_length, hidden_dim)) the last layer hidden states,
+                }
+        """
+
+        outputs = self.debertaV2(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            return_dict=True,
+        )
+        pooled_output = outputs.pooler_output
+        pooled_output = self.dropout(pooled_output)
+
+        instance_hidden_states = outputs.last_hidden_state
+        logits = None
+        if label_embedding is not None:
+            W_act, b_act = label_embedding
+            W_act = W_act.to(pooled_output.device)
+            b_act = b_act.to(pooled_output.device)
+            logits = (pooled_output.unsqueeze(1) * W_act).sum(dim=-1) + b_act.squeeze(2)
+        return {
+            "logits": logits,
+            "pooled_output": pooled_output,
+            "hidden_states": instance_hidden_states,
+        }
+        
 ENCODER_CLASSES = {
     "bert": TransformerModelClass(BertConfig, BertForXMC, BertTokenizerFast),
     "roberta": TransformerModelClass(RobertaConfig, RobertaForXMC, RobertaTokenizerFast),
     "xlm-roberta": TransformerModelClass(
         XLMRobertaConfig, XLMRobertaForXMC, XLMRobertaTokenizerFast
     ),
+    "deberta-v2": TransformerModelClass(DebertaV2Config,DebertaV2ForXMC,DebertaV2TokenizerFast),
     "xlnet": TransformerModelClass(XLNetConfig, XLNetForXMC, XLNetTokenizerFast),
     "distilbert": TransformerModelClass(
         DistilBertConfig, DistilBertForXMC, DistilBertTokenizerFast
